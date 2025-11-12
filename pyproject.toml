@@ -1,0 +1,16 @@
+[project]
+name = "people-info-extraction"
+version = "0.1.0"
+description = "POC pipeline for extracting structured person data from Vietnamese news articles"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "lxml",
+    "tqdm",
+    "pydantic>=2.0",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
