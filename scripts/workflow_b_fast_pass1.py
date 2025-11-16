@@ -31,15 +31,32 @@ SCHEMA_JSON = json.dumps(
                 "aliases": [{"text": "", "start": -1, "end": -1}],
                 "age": {"value": None, "start": -1, "end": -1},
                 "birth_date": {"value": None, "start": -1, "end": -1},
-                "birth_place": {"text": "", "start": -1, "end": -1},
+                "address": { "text": "", "start": -1, "end": -1 },
+                "occupation": { "text": "", "start": -1, "end": -1 },
                 "phones": [{"text": "", "start": -1, "end": -1}],
+                "organizations": [{ "text": "", "start": -1, "end": -1 }],
                 "national_id": {"text": "", "start": -1, "end": -1},
                 "roles": [{"label": "suspect|victim|official|witness|lawyer|judge|other", "sentence_id": 0}],
                 "actions": [
                     {
                         "predicate": "arrested|charged|sentenced|confessed|searched|seized|other",
-                        "object_person_name": "",
-                        "amount_vnd": None,
+                        "object_description": {
+                            "text": "",
+                            "start": -1,
+                            "end": -1
+                        },
+                        "items_seized": [{"text": "", "start": -1, "end": -1}],
+                        "location": {
+                            "text": "",
+                            "start": -1,
+                            "end": -1
+                        },
+                        "time": {
+                            "text": "",
+                            "start": -1,
+                            "end": -1
+                        },
+                        "amount": None,
                         "law_article": "",
                         "sentence_years": None,
                         "sentence_id": 0,
