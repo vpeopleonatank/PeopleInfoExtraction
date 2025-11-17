@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import requests
+
+from .types import LLMGeneration
 
 
 class OllamaError(RuntimeError):
@@ -15,18 +16,6 @@ class OllamaError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload or {}
-
-
-@dataclass(slots=True)
-class OllamaGeneration:
-    """Container for a non-streamed Ollama response."""
-
-    content: str
-    model: str
-    created_at: Optional[str]
-    total_duration: Optional[int]
-    prompt_eval_count: Optional[int]
-    eval_count: Optional[int]
 
 
 class OllamaClient:
@@ -66,7 +55,7 @@ class OllamaClient:
         format: Optional[str] = None,
         keep_alive: Optional[int] = None,
         extra_options: Optional[Dict[str, Any]] = None,
-    ) -> OllamaGeneration:
+    ) -> LLMGeneration:
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -81,7 +70,7 @@ class OllamaClient:
             payload["options"].update(extra_options)
         data = self._post("/api/chat", payload)
         message = data.get("message") or {}
-        return OllamaGeneration(
+        return LLMGeneration(
             content=message.get("content", ""),
             model=data.get("model", self.model),
             created_at=data.get("created_at"),
@@ -97,7 +86,7 @@ class OllamaClient:
         user_prompt: str,
         format: Optional[str] = None,
         extra_options: Optional[Dict[str, Any]] = None,
-    ) -> OllamaGeneration:
+    ) -> LLMGeneration:
         """Helper to run a single system+user chat turn."""
 
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]

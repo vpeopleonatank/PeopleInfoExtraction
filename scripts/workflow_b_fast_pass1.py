@@ -1,4 +1,4 @@
-"""Fast Workflow B pass #1 runner using local Ollama (Qwen3:4B)."""
+"""Fast Workflow B pass #1 runner using a local LLM backend (Ollama or vLLM)."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,7 @@ from typing import Dict, Iterator, Optional, Sequence, Tuple
 
 from src import config
 from src.extraction.passages import passage_records
-from src.llm import OllamaClient, OllamaError
+from src.llm import OllamaClient, OllamaError, VLLMClient, VLLMError
 
 LOGGER = logging.getLogger("workflow_b_fast_pass1")
 
@@ -72,7 +72,13 @@ SCHEMA_JSON = json.dumps(
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Workflow B Pass #1 using local Ollama model.")
+    parser = argparse.ArgumentParser(description="Run Workflow B Pass #1 using a local LLM model.")
+    parser.add_argument(
+        "--backend",
+        choices=("ollama", "vllm"),
+        default="ollama",
+        help="LLM backend to use (default: ollama).",
+    )
     parser.add_argument(
         "--articles-dir",
         type=Path,
@@ -87,8 +93,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, default=None, help="Maximum number of articles to process.")
     parser.add_argument("--doc-ids", nargs="+", help="Specific doc_ids to process (default: all).")
-    parser.add_argument("--model", default="qwen3:4b", help="Ollama model name (default: qwen3:4b).")
-    parser.add_argument("--base-url", default="http://localhost:11435", help="Ollama base URL.")
+    parser.add_argument("--model", default="qwen3:4b", help="Model name to use for the selected backend (default: qwen3:4b).")
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="API base URL for the selected backend (default: Ollama http://localhost:11435, vLLM http://localhost:8000/v1).",
+    )
+    parser.add_argument("--api-key", default=None, help="API key for OpenAI-compatible endpoints (vLLM).")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature (default: 0).")
     parser.add_argument("--timeout", type=int, default=1200, help="Request timeout in seconds (default: 120).")
     parser.add_argument(
@@ -229,12 +240,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         LOGGER.error("JSONL path %s does not exist", args.jsonl_path)
         return 1
     system_prompt = load_system_prompt(args.system_prompt_path)
-    client = OllamaClient(
-        model=args.model,
-        base_url=args.base_url,
-        temperature=args.temperature,
-        timeout=args.timeout,
-    )
+    default_base_urls = {
+        "ollama": "http://localhost:11435",
+        "vllm": "http://localhost:8000/v1",
+    }
+    base_url = args.base_url or default_base_urls[args.backend]
+
+    if args.backend == "ollama":
+        client = OllamaClient(
+            model=args.model,
+            base_url=base_url,
+            temperature=args.temperature,
+            timeout=args.timeout,
+        )
+        error_cls = OllamaError
+    else:
+        client = VLLMClient(
+            model=args.model,
+            base_url=base_url,
+            temperature=args.temperature,
+            timeout=args.timeout,
+            api_key=args.api_key,
+        )
+        error_cls = VLLMError
 
     processed_docs = 0
     success_passages = 0
@@ -278,7 +306,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             doc_attempts += 1
             try:
                 generation = client.generate(system_prompt=system_prompt, user_prompt=user_prompt, format=None)
-            except OllamaError as exc:
+            except error_cls as exc:
                 error_passages += 1
                 doc_errors += 1
                 write_output(
