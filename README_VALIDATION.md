@@ -191,6 +191,41 @@ python scripts/test_validator_demo.py
 python scripts/workflow_b_validator.py --summary-only
 ```
 
+**Optional: Cross-check with Gemini 2.5 Flash**
+
+```bash
+export GOOGLE_API_KEY="your-key"
+python scripts/workflow_b_gemini_validator.py --limit 5
+```
+
+**Review Gemini report with passage + issues side-by-side**
+
+```bash
+# single report
+python scripts/view_gemini_report.py data/cache/workflow_b_fast/gemini_reports/<file>.json
+
+# or inspect an entire directory
+python scripts/view_gemini_report.py data/cache/workflow_b_fast/gemini_reports/*.json
+
+# prompt to mark manual status while reviewing
+python scripts/view_gemini_report.py data/cache/workflow_b_fast/gemini_reports/*.json --prompt-mark
+
+# quick bulk mark (sets field without prompting)
+python scripts/view_gemini_report.py some_report.json --mark invalid
+```
+
+Use `--left-ratio` (e.g., `0.6`) if you want to allocate more terminal width to the passage column. The viewer automatically skips `_batch_summary.json`.
+
+To see how many reports have been reviewed manually, run:
+
+```bash
+python scripts/summarize_manual_status.py data/cache/workflow_b_fast/gemini_reports
+```
+
+Pass `--list-unset` to print the files you still need to mark.
+
+Gemini reports will be written to `data/cache/workflow_b_fast/gemini_reports/`. Use `--dry-run` to inspect prompts without making network calls or run `scripts/test_gemini_validator_demo.py` for an end-to-end stubbed example.
+
 ## Next Steps
 
 1. **Start Ollama**: `ollama serve`

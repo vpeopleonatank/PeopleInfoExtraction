@@ -202,6 +202,45 @@ This performs rule-based validation without using an LLM and is useful for:
 - Quick testing without LLM overhead
 - Development and debugging
 
+## Gemini 2.5 Flash Validator
+
+In addition to the local Ollama validator, you can send extractions to Google Gemini 2.5 Flash for an external fact-check.
+
+### Prerequisites
+
+1. Install project dependencies (the `python-genai` client is already in `pyproject.toml`):
+   ```bash
+   pip install -e .
+   ```
+2. Obtain a Google API key and set it in the environment:
+   ```bash
+   export GOOGLE_API_KEY="your-key"
+   ```
+
+### Running the Gemini Batch Validator
+
+```bash
+python scripts/workflow_b_gemini_validator.py \
+  --input-dir data/cache/workflow_b_fast/pass1 \
+  --output-dir data/cache/workflow_b_fast/gemini_reports \
+  --limit 5
+```
+
+- Reports are saved as JSON files alongside `_batch_summary.json` in the specified output directory.
+- Use `--dry-run` to inspect prompts and receive mocked responses without calling the API.
+- Use `--rate-limit-ms` to throttle requests if hitting quota limits.
+- Generate summaries from existing reports with `--summary-only`.
+
+### Demo Without Network Access
+
+When network access is unavailable, run the stubbed demo:
+
+```bash
+python scripts/test_gemini_validator_demo.py
+```
+
+This loads a sample file, feeds it to a fake Gemini client, and prints the resulting report to illustrate the workflow.
+
 ## Integration with Workflow
 
 ### Recommended Workflow
