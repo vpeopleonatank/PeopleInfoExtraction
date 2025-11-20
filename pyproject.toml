@@ -10,6 +10,7 @@ dependencies = [
     "tqdm",
     "pydantic>=2.0",
     "google-genai",
+    "openai>=1.0.0",
 ]
 
 [build-system]

@@ -96,6 +96,33 @@ def build_issue_text(report: dict) -> str:
     return "\n".join(lines).rstrip()
 
 
+def format_parsed_people(
+    people: Optional[list[dict]],
+    available: bool,
+    error_msg: Optional[str] = None,
+) -> str:
+    if not available:
+        reason = error_msg or "source file unavailable"
+        return f"Parsed people unavailable ({reason})"
+
+    people = people or []
+    lines: list[str] = ["Parsed People (source extraction)"]
+    if not people:
+        lines.append("  (none)")
+        return "\n".join(lines)
+
+    for idx, person in enumerate(people, start=1):
+        name = person.get("name") or person.get("full_name") or "unknown"
+        lines.append(f"{idx}. {name}")
+        try:
+            payload = json.dumps(person, ensure_ascii=False, indent=2)
+        except TypeError:
+            payload = str(person)
+        for entry_line in payload.splitlines():
+            lines.append(f"   {entry_line}")
+    return "\n".join(lines).rstrip()
+
+
 def chunk_columns(left_lines: Iterable[str], right_lines: Iterable[str], left_width: int) -> list[str]:
     output: list[str] = []
     separator = " | "
@@ -159,6 +186,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Prompt after each report to mark it as valid/invalid/unset.",
     )
+    parser.add_argument(
+        "--show-people",
+        action="store_true",
+        help="Append parsed.people from the source extraction to the issues column.",
+    )
     return parser.parse_args()
 
 
@@ -201,20 +233,38 @@ def render_report(
     report = load_json(report_path)
     source_file = resolve_source_path(report.get("source_file", ""), report_path)
     passage_text = ""
+    parsed_people: Optional[list[dict]] = None
+    parsed_people_available = False
+    source_error: Optional[str] = None
     if source_file and source_file.exists():
         try:
             original = load_json(source_file)
             passage_text = original.get("passage", {}).get("text") or ""
+            parsed_people = (
+                (original.get("response") or {}).get("parsed", {}).get("people") or []
+            )
+            parsed_people_available = True
         except Exception as exc:  # pylint: disable=broad-except
             passage_text = f"[Error loading passage from {source_file}: {exc}]"
+            source_error = str(exc)
     else:
         passage_text = "[Original passage not found]"
+        if report.get("source_file"):
+            source_error = f"{report.get('source_file')} not found"
+        else:
+            source_error = "source file not specified"
 
     terminal_width = shutil.get_terminal_size((120, 20)).columns
     left_width = max(10, int(terminal_width * left_ratio) - 1)
     right_width = max(10, terminal_width - left_width - 3)
 
     issue_text = build_issue_text(report)
+    if args.show_people:
+        people_text = format_parsed_people(parsed_people, parsed_people_available, source_error)
+        if issue_text:
+            issue_text = f"{issue_text}\n\n{people_text}"
+        else:
+            issue_text = people_text
     left_lines = wrap_lines(passage_text, left_width)
     right_lines = wrap_lines(issue_text, right_width)
 

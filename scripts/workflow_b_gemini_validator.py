@@ -110,8 +110,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", type=str, default="gemini-2.5-flash", help="Gemini model to use.")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature.")
     parser.add_argument("--max-output-tokens", type=int, default=2048, help="Maximum output tokens.")
+    parser.add_argument(
+        "--transport",
+        choices=["google", "openrouter"],
+        default="google",
+        help="Backend to call Gemini: 'google' uses python-genai, 'openrouter' uses OpenAI SDK via OpenRouter.",
+    )
     parser.add_argument("--max-passage-chars", type=int, default=12000, help="Max passage characters sent to Gemini.")
     parser.add_argument("--api-key", type=str, default=None, help="Google API key (fallback to GOOGLE_API_KEY env).")
+    parser.add_argument(
+        "--openrouter-api-key",
+        type=str,
+        default=None,
+        help="OpenRouter API key (fallback to OPENROUTER_API_KEY env).",
+    )
+    parser.add_argument(
+        "--openrouter-site-url",
+        type=str,
+        default=None,
+        help="Optional site URL sent via HTTP-Referer header when using OpenRouter.",
+    )
+    parser.add_argument(
+        "--openrouter-site-name",
+        type=str,
+        default=None,
+        help="Optional site name sent via X-Title header when using OpenRouter.",
+    )
+    parser.add_argument(
+        "--openrouter-base-url",
+        type=str,
+        default=None,
+        help="Custom OpenRouter base URL (default https://openrouter.ai/api/v1).",
+    )
     parser.add_argument("--rate-limit-ms", type=int, default=0, help="Sleep between requests (milliseconds).")
     parser.add_argument("--summary-only", action="store_true", help="Only recompute batch summary from existing reports.")
     parser.add_argument("--dry-run", action="store_true", help="Skip API calls and emit mocked Gemini responses.")
@@ -146,6 +176,11 @@ def main() -> None:
         max_output_tokens=args.max_output_tokens,
         max_passage_chars=args.max_passage_chars,
         api_key=args.api_key,
+        transport=args.transport,
+        openrouter_api_key=args.openrouter_api_key,
+        openrouter_site_url=args.openrouter_site_url,
+        openrouter_site_name=args.openrouter_site_name,
+        openrouter_base_url=args.openrouter_base_url,
         dry_run=args.dry_run,
     )
 

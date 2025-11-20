@@ -29,6 +29,25 @@ class BrokenGeminiClient:
         self.models = self._Models()
 
 
+class StubOpenRouterClient:
+    class _Completions:
+        def __init__(self, parent: "StubOpenRouterClient") -> None:
+            self.parent = parent
+
+        def create(self, *, model: str, messages: list[dict], **_kwargs):
+            self.parent.calls.append({"model": model, "messages": messages})
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.parent.payload))])
+
+    class _Chat:
+        def __init__(self, parent: "StubOpenRouterClient") -> None:
+            self.completions = StubOpenRouterClient._Completions(parent)
+
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+        self.calls: list[dict] = []
+        self.chat = self._Chat(self)
+
+
 def _base_kwargs() -> dict:
     return {
         "doc_id": "doc",
@@ -91,3 +110,20 @@ def test_passage_truncation_flag() -> None:
 
     assert report.prompt_truncated is True
     assert report.prompt_char_count == 10
+
+
+def test_openrouter_transport_uses_chat_api() -> None:
+    payload = json.dumps({"verdict": "unsupported", "issues": [], "missing_people": []}, ensure_ascii=False)
+    client = StubOpenRouterClient(payload)
+    validator = GeminiFlashValidator(
+        client=client,
+        model_name="google/gemini-2.5-flash",
+        transport="openrouter",
+        openrouter_api_key="stub",
+    )
+
+    report = validator.validate_extraction(**_base_kwargs())
+
+    assert report.verdict == GeminiVerdict.UNSUPPORTED
+    assert client.calls, "Expected OpenRouter stub to capture at least one call."
+    assert client.calls[0]["messages"][0]["role"] == "system"

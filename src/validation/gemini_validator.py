@@ -13,6 +13,11 @@ except ImportError:  # pragma: no cover - dependency may be missing in limited e
     genai = None
     genai_types = None
 
+try:
+    from openai import OpenAI as OpenAIClient
+except ImportError:  # pragma: no cover - optional dependency
+    OpenAIClient = None
+
 from .models import (
     GeminiIssueType,
     GeminiMissingPerson,
@@ -55,6 +60,11 @@ class GeminiFlashValidator:
         max_output_tokens: int = 32468,
         max_passage_chars: int = 12000,
         api_key: Optional[str] = None,
+        transport: str = "google",
+        openrouter_api_key: Optional[str] = None,
+        openrouter_site_url: Optional[str] = None,
+        openrouter_site_name: Optional[str] = None,
+        openrouter_base_url: Optional[str] = None,
         system_prompt: Optional[str] = None,
         client: Optional[Any] = None,
         dry_run: bool = False,
@@ -67,6 +77,17 @@ class GeminiFlashValidator:
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
         self.dry_run = dry_run
 
+        allowed_transports = {"google", "openrouter"}
+        if transport not in allowed_transports:
+            raise ValueError(f"Unsupported transport '{transport}'. Expected one of {sorted(allowed_transports)}.")
+        self.transport = transport
+        self.openrouter_api_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
+        self.openrouter_site_url = openrouter_site_url or os.getenv("OPENROUTER_SITE_URL")
+        self.openrouter_site_name = openrouter_site_name or os.getenv("OPENROUTER_SITE_NAME")
+        self.openrouter_base_url = (
+            openrouter_base_url or os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1"
+        )
+
         self._client = client or self._build_client()
         self._last_prompt: Optional[str] = None
 
@@ -78,6 +99,11 @@ class GeminiFlashValidator:
     def _build_client(self) -> Any:
         if self.dry_run:
             return None
+        if self.transport == "openrouter":
+            return self._build_openrouter_client()
+        return self._build_google_client()
+
+    def _build_google_client(self) -> Any:
         if genai is None:
             raise GeminiValidatorError(
                 "python-genai dependency is missing. Install dependencies or run in dry-run mode."
@@ -89,6 +115,25 @@ class GeminiFlashValidator:
             return genai.Client(**client_kwargs)
         except Exception as exc:  # pragma: no cover - network/environment errors
             raise GeminiValidatorError(f"Failed to initialize Gemini client: {exc}") from exc
+
+    def _build_openrouter_client(self) -> Any:
+        if OpenAIClient is None:  # pragma: no cover - optional dependency
+            raise GeminiValidatorError("openai package is missing. Install openai>=1.0.0 to use OpenRouter transport.")
+        api_key = self.openrouter_api_key
+        if not api_key:
+            raise GeminiValidatorError("OpenRouter API key is required. Pass via argument or OPENROUTER_API_KEY env var.")
+        try:
+            return OpenAIClient(base_url=self.openrouter_base_url, api_key=api_key)
+        except Exception as exc:  # pragma: no cover - network/environment errors
+            raise GeminiValidatorError(f"Failed to initialize OpenRouter client: {exc}") from exc
+
+    def _openrouter_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.openrouter_site_url:
+            headers["HTTP-Referer"] = self.openrouter_site_url
+        if self.openrouter_site_name:
+            headers["X-Title"] = self.openrouter_site_name
+        return headers
 
     def _truncate_passage(self, text: str) -> tuple[str, bool]:
         if not text:
@@ -154,7 +199,11 @@ class GeminiFlashValidator:
             }
             return json.dumps(mock, ensure_ascii=False)
 
-        import ipdb; ipdb.set_trace();
+        if self.transport == "openrouter":
+            return self._call_openrouter(user_prompt)
+        return self._call_google(user_prompt)
+
+    def _call_google(self, user_prompt: str) -> str:
         config = None
         if genai_types is not None:
             config = genai_types.GenerateContentConfig(
@@ -185,6 +234,56 @@ class GeminiFlashValidator:
                         part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "") for part in parts
                     )
         raise GeminiValidatorError("Gemini response did not contain text.")
+
+    def _call_openrouter(self, user_prompt: str) -> str:
+        chat = getattr(self._client, "chat", None)
+        if chat is None:
+            raise GeminiValidatorError("OpenRouter client is missing chat attribute.")
+        completions = getattr(chat, "completions", None)
+        if completions is None:
+            raise GeminiValidatorError("OpenRouter client is missing chat.completions.")
+        headers = self._openrouter_headers()
+        kwargs: dict[str, Any] = {}
+        if headers:
+            kwargs["extra_headers"] = headers
+        try:
+            response = completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_output_tokens,
+                **kwargs,
+            )
+        except Exception as exc:  # pragma: no cover - propagate API issues
+            raise GeminiValidatorError(f"OpenRouter request failed: {exc}") from exc
+
+        choices = getattr(response, "choices", None)
+        if not choices:
+            raise GeminiValidatorError("OpenRouter response did not include choices.")
+        first_choice = choices[0]
+        message = getattr(first_choice, "message", None)
+        if message is None and isinstance(first_choice, dict):
+            message = first_choice.get("message")
+        if message is None:
+            raise GeminiValidatorError("OpenRouter response missing message content.")
+
+        content = getattr(message, "content", None)
+        if content is None and isinstance(message, dict):
+            content = message.get("content")
+        if isinstance(content, list):
+            text = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+            ).strip()
+        elif isinstance(content, str):
+            text = content
+        else:
+            text = str(content or "")
+        if not text:
+            raise GeminiValidatorError("OpenRouter response content was empty.")
+        return text
 
     def _coerce_issue_type(self, value: Optional[str]) -> GeminiIssueType:
         if not value:

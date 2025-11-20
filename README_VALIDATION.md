@@ -212,6 +212,9 @@ python scripts/view_gemini_report.py data/cache/workflow_b_fast/gemini_reports/*
 
 # quick bulk mark (sets field without prompting)
 python scripts/view_gemini_report.py some_report.json --mark invalid
+
+# include parsed.people (full JSON payload) from the extraction file in the right column
+python scripts/view_gemini_report.py some_report.json --show-people
 ```
 
 Use `--left-ratio` (e.g., `0.6`) if you want to allocate more terminal width to the passage column. The viewer automatically skips `_batch_summary.json`.
