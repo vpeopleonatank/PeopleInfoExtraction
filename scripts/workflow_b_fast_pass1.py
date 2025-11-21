@@ -1,4 +1,4 @@
-"""Fast Workflow B pass #1 runner using a local LLM backend (Ollama or vLLM)."""
+"""Fast Workflow B pass #1 runner using an LLM backend (Ollama, vLLM, or OpenRouter)."""
 from __future__ import annotations
 
 import argparse
@@ -6,11 +6,11 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
 
 from src import config
 from src.extraction.passages import passage_records
-from src.llm import OllamaClient, OllamaError, VLLMClient, VLLMError
+from src.llm import OllamaClient, OllamaError, OpenRouterClient, OpenRouterError, VLLMClient, VLLMError
 
 LOGGER = logging.getLogger("workflow_b_fast_pass1")
 
@@ -72,10 +72,10 @@ SCHEMA_JSON = json.dumps(
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Workflow B Pass #1 using a local LLM model.")
+    parser = argparse.ArgumentParser(description="Run Workflow B Pass #1 using an LLM backend.")
     parser.add_argument(
         "--backend",
-        choices=("ollama", "vllm"),
+        choices=("ollama", "vllm", "openrouter"),
         default="ollama",
         help="LLM backend to use (default: ollama).",
     )
@@ -97,9 +97,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default=None,
-        help="API base URL for the selected backend (default: Ollama http://localhost:11435, vLLM http://localhost:8000/v1).",
+        help=(
+            "API base URL for the selected backend "
+            "(default: Ollama http://localhost:11435, vLLM http://localhost:8000/v1, OpenRouter https://openrouter.ai/api/v1)."
+        ),
     )
-    parser.add_argument("--api-key", default=None, help="API key for OpenAI-compatible endpoints (vLLM).")
+    parser.add_argument("--api-key", default=None, help="API key for OpenAI-compatible endpoints (vLLM/OpenRouter).")
+    parser.add_argument("--openrouter-referer", default=None, help="Optional HTTP-Referer header for OpenRouter ranking.")
+    parser.add_argument("--openrouter-title", default=None, help="Optional X-Title header for OpenRouter ranking.")
+    parser.add_argument(
+        "--openrouter-extra-body",
+        default=None,
+        help="Optional JSON object string passed as extra_body to OpenRouter requests.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature (default: 0).")
     parser.add_argument("--timeout", type=int, default=1200, help="Request timeout in seconds (default: 120).")
     parser.add_argument(
@@ -250,8 +260,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     default_base_urls = {
         "ollama": "http://localhost:11435",
         "vllm": "http://localhost:8000/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
     }
     base_url = args.base_url or default_base_urls[args.backend]
+    openrouter_extra_body: Optional[Dict[str, Any]] = None
+    if args.openrouter_extra_body:
+        try:
+            parsed_extra = json.loads(args.openrouter_extra_body)
+            if not isinstance(parsed_extra, dict):
+                raise ValueError("extra body must be a JSON object")
+            openrouter_extra_body = parsed_extra
+        except ValueError as exc:
+            LOGGER.error("Invalid --openrouter-extra-body: %s", exc)
+            return 1
 
     if args.backend == "ollama":
         client = OllamaClient(
@@ -261,7 +282,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             timeout=args.timeout,
         )
         error_cls = OllamaError
-    else:
+    elif args.backend == "vllm":
         client = VLLMClient(
             model=args.model,
             base_url=base_url,
@@ -270,6 +291,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             api_key=args.api_key,
         )
         error_cls = VLLMError
+    else:
+        if not args.api_key:
+            LOGGER.error("--api-key is required for the openrouter backend")
+            return 1
+        headers = {}
+        if args.openrouter_referer:
+            headers["HTTP-Referer"] = args.openrouter_referer
+        if args.openrouter_title:
+            headers["X-Title"] = args.openrouter_title
+        client = OpenRouterClient(
+            model=args.model,
+            base_url=base_url,
+            temperature=args.temperature,
+            timeout=args.timeout,
+            api_key=args.api_key,
+            extra_headers=headers or None,
+            extra_body=openrouter_extra_body,
+        )
+        error_cls = OpenRouterError
 
     processed_docs = 0
     success_passages = 0
