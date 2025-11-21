@@ -191,6 +191,13 @@ def build_user_prompt(article: dict, passage: dict, text: str) -> str:
     metadata = "\n".join(meta_lines)
     return (
         "Trích xuất tất cả thông tin về con người trong đoạn báo tiếng Việt dưới đây.\n"
+        "- Chỉ liệt kê cá nhân được nêu bằng tên riêng/biệt danh (danh từ riêng viết hoa); mỗi người chỉ một entry. Gộp biệt danh vào aliases.\n"
+        "- Bỏ qua người chỉ xuất hiện dưới dạng danh từ chung hoặc đại từ không đi kèm tên riêng (ví dụ: \"người đàn ông\", \"tài xế\", \"anh ta\", \"họ\", \"nạn nhân\"); không suy luận tên từ chức danh/quan hệ.\n"
+        "- Mọi text/start/end phải trích nguyên văn từ passage; nếu thiếu trường thì để null hoặc mảng rỗng và start/end = -1.\n"
+        "- Quan hệ cho graph:\n"
+        "  - Tổ chức đi cùng tên người → điền vào organizations với span nguyên văn.\n"
+        "  - Hành động chỉ tạo khi câu chứa tên người đó; ghi predicate và spans cho object/location/time/items/law_article; dùng sentence_id của câu chứa tên.\n"
+        "- Không tạo giá trị hay quan hệ nếu không có cụm từ rõ ràng trong passage; không đoán thêm.\n"
         "Metadata:\n"
         f"{metadata}\n\n"
         "Đoạn văn:\n<<<\n"
