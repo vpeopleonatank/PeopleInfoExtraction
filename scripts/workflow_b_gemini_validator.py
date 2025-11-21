@@ -156,7 +156,10 @@ def main() -> None:
 
     if args.summary_only:
         summary = build_batch_summary(output_dir, validator_model=args.model)
-        print(f"Summary generated for {summary.total_files_processed} reports in {output_dir}")
+        print(
+            f"Summary generated for {summary.total_files_processed} reports in {output_dir} "
+            f"(usable: {summary.total_usable}/{summary.total_files_processed} = {summary.usable_percentage:.1f}%)"
+        )
         return
 
     if not input_dir.exists():
@@ -208,11 +211,12 @@ def main() -> None:
         if args.rate_limit_ms > 0:
             time.sleep(args.rate_limit_ms / 1000)
 
-    save_json(summary.model_dump(mode="json"), output_dir / "_batch_summary.json")
+    summary = build_batch_summary(output_dir, validator_model=args.model)
 
     print(
         f"Processed: {processed}, Skipped: {skipped}, Failed: {failed}, "
-        f"Issues logged: {summary.total_issues}, Missing people: {summary.total_missing_people}"
+        f"Issues logged: {summary.total_issues}, Missing people: {summary.total_missing_people}, "
+        f"Usable: {summary.total_usable}/{summary.total_files_processed} ({summary.usable_percentage:.1f}%)"
     )
 
 

@@ -65,3 +65,31 @@
 3. Implement batch CLI + demo script.
 4. Add tests and documentation updates.
 5. Manual dry-run with sample file (mocked) to validate end-to-end flow.
+
+### Usability Metric (LLM-Graded) Strategy
+- **Definition**: A result is "usable" when Gemini returns `verdict=supported` and flags no critical issues and no missing people. Non-critical issues (warning/info) are allowed but must be listed.
+- **Single-pass rubric prompt**: Extend the Gemini JSON schema to include `usable` and `confidence` with rules baked into the prompt: usable=true only if verdict is supported AND there are no critical issues AND `missing_people` is empty; if unsure, set usable=false. Make the model label issue severity (critical|warning|info) so the rule can be enforced.
+- **Prompt stub**:
+  ```json
+  {
+    "verdict": "supported|unsure|unsupported",
+    "issues": [
+      {
+        "type": "hallucination|missing_info|conflict|other",
+        "severity": "critical|warning|info",
+        "person_name": null,
+        "field": null,
+        "description": "",
+        "evidence": null
+      }
+    ],
+    "missing_people": [...],
+    "usable": true,
+    "confidence": 0.0,
+    "notes": "brief rationale"
+  }
+  ```
+  Instructions: "Usable only if supported AND missing_people is empty AND there are no critical issues (warnings/info allowed but must be listed). If unsure, mark usable=false."
+- **Batch aggregation**: In the batch summary, count `usable=true` reports and compute `usable_percentage = usable/total * 100`. This is purely model-judged, no manual review loop.
+- **Calibration loop**: Before locking the rule, run Gemini on 3–5 representative files asking it to propose a rubric and expected usable rate. Compare against a small manual spot-check (≈10 files). If the rubric is too strict/lenient, tune the "usable" rule in the prompt (e.g., allow ≤1 warning/info issue but still reject any critical issues).
+- **Determinism**: Use temperature 0, request JSON via `response_mime_type=application/json`, and instruct the model to default to `usable=false` when the passage is truncated or it is uncertain.

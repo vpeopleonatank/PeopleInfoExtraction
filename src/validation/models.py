@@ -150,6 +150,14 @@ class GeminiIssueType(str, Enum):
     OTHER = "other"
 
 
+class GeminiIssueSeverity(str, Enum):
+    """Severity levels for Gemini issues."""
+
+    CRITICAL = "critical"
+    WARNING = "warning"
+    INFO = "info"
+
+
 class GeminiVerdict(str, Enum):
     """High-level verdict returned by the Gemini validator."""
 
@@ -170,6 +178,7 @@ class GeminiValidationIssue(BaseModel):
 
     type: GeminiIssueType
     description: str
+    severity: Optional[GeminiIssueSeverity] = None
     person_name: Optional[str] = None
     field: Optional[str] = None
     evidence: Optional[str] = None
@@ -191,6 +200,8 @@ class GeminiReportSummary(BaseModel):
     verdict: GeminiVerdict
     issue_count: int = 0
     missing_people_count: int = 0
+    usable: Optional[bool] = None
+    confidence: Optional[float] = None
 
 
 class GeminiValidationReport(BaseModel):
@@ -206,6 +217,8 @@ class GeminiValidationReport(BaseModel):
 
     verdict: GeminiVerdict = GeminiVerdict.UNSURE
     manual_status: Optional[ManualValidationStatus] = None
+    usable: Optional[bool] = None
+    confidence: Optional[float] = None
     issues: list[GeminiValidationIssue] = Field(default_factory=list)
     missing_people: list[GeminiMissingPerson] = Field(default_factory=list)
     summary: GeminiReportSummary
@@ -232,6 +245,12 @@ class GeminiBatchSummary(BaseModel):
     total_unsupported: int = 0
     total_issues: int = 0
     total_missing_people: int = 0
+    total_usable: int = 0
+
+    usable_percentage: float = 0.0
+    supported_percentage: float = 0.0
+    unsure_percentage: float = 0.0
+    unsupported_percentage: float = 0.0
     validator_model: str
     generated_at: datetime = Field(default_factory=datetime.now)
 
@@ -246,9 +265,58 @@ class GeminiBatchSummary(BaseModel):
         self.total_issues += len(report.issues)
         self.total_missing_people += len(report.missing_people)
 
+        if self._effective_usable(report):
+            self.total_usable += 1
+
         if report.verdict == GeminiVerdict.SUPPORTED:
             self.total_supported += 1
         elif report.verdict == GeminiVerdict.UNSURE:
             self.total_unsure += 1
         else:
             self.total_unsupported += 1
+
+        self._update_percentages()
+
+    def _effective_usable(self, report: GeminiValidationReport) -> bool:
+        """
+        Respect the model's explicit usable flag when provided, but enforce the rule-based
+        guardrails (no critical issues, no missing people, verdict must be supported).
+        """
+        rule_usable = self._is_report_usable(report)
+        if report.usable is None:
+            return rule_usable
+        return bool(report.usable) and rule_usable
+
+    def _is_report_usable(self, report: GeminiValidationReport) -> bool:
+        """
+        Define "usable" as supported, with no missing people, and no critical issues.
+        Issues missing a severity are treated as critical for safety.
+        """
+        return (
+            report.verdict == GeminiVerdict.SUPPORTED
+            and not report.missing_people
+            and not self._has_critical_issue(report.issues)
+        )
+
+    def _has_critical_issue(self, issues: list[GeminiValidationIssue]) -> bool:
+        """Detect if any issue is critical (or missing severity, which is treated as critical)."""
+        for issue in issues:
+            severity = issue.severity or GeminiIssueSeverity.CRITICAL
+            if severity == GeminiIssueSeverity.CRITICAL:
+                return True
+        return False
+
+    def _update_percentages(self) -> None:
+        """Recompute percentage fields after counters are updated."""
+        total = self.total_files_processed
+        if total <= 0:
+            self.usable_percentage = 0.0
+            self.supported_percentage = 0.0
+            self.unsure_percentage = 0.0
+            self.unsupported_percentage = 0.0
+            return
+
+        self.usable_percentage = round((self.total_usable / total) * 100, 2)
+        self.supported_percentage = round((self.total_supported / total) * 100, 2)
+        self.unsure_percentage = round((self.total_unsure / total) * 100, 2)
+        self.unsupported_percentage = round((self.total_unsupported / total) * 100, 2)

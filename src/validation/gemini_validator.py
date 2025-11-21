@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from .models import (
     GeminiIssueType,
+    GeminiIssueSeverity,
     GeminiMissingPerson,
     GeminiReportSummary,
     GeminiValidationIssue,
@@ -44,12 +45,17 @@ class GeminiFlashValidator:
         "{\n"
         '  "verdict": "supported|unsure|unsupported",\n'
         '  "issues": [\n'
-        "    {\"type\": \"hallucination|missing_info|conflict|other\", \"person_name\": str|null,\n"
-        '     "field": str|null, "description": str, "evidence": str|null}\n'
+        "    {\"type\": \"hallucination|missing_info|conflict|other\", \"severity\": \"critical|warning|info\",\n"
+        '     "person_name": str|null, "field": str|null, "description": str, "evidence": str|null}\n'
         "  ],\n"
-        '  "missing_people": [{"name": str, "snippet": str|null}]\n'
+        '  "missing_people": [{"name": str, "snippet": str|null}],\n'
+        '  "usable": true|false,\n'
+        '  "confidence": number (0-1),\n'
+        '  "notes": str|null\n'
         "}\n"
-        "- If unsure, choose verdict \"unsure\" and explain why."
+        "- Usable MUST be true only when verdict is supported, missing_people is empty, and there are no critical issues. "
+        "Issues without severity should be treated as critical. If unsure, set usable=false.\n"
+        "- If unsure or the passage feels incomplete/truncated, choose verdict \"unsure\" and set usable=false."
     )
 
     def __init__(
@@ -300,6 +306,15 @@ class GeminiFlashValidator:
             return GeminiIssueType.CONFLICT
         return GeminiIssueType.OTHER
 
+    def _coerce_issue_severity(self, value: Optional[str]) -> Optional[GeminiIssueSeverity]:
+        if not value:
+            return None
+        normalized = value.lower()
+        for severity in GeminiIssueSeverity:
+            if normalized == severity.value:
+                return severity
+        return None
+
     def _coerce_verdict(self, value: Optional[str]) -> GeminiVerdict:
         if not value:
             return GeminiVerdict.UNSURE
@@ -308,6 +323,47 @@ class GeminiFlashValidator:
             if normalized == verdict.value:
                 return verdict
         return GeminiVerdict.UNSURE
+
+    def _derive_usable(
+        self,
+        *,
+        verdict: GeminiVerdict,
+        issues: list[GeminiValidationIssue],
+        missing_people: list[GeminiMissingPerson],
+        provided_usable: Optional[bool],
+    ) -> bool:
+        """
+        Combine the model's explicit usable flag (if provided) with rule-based safety
+        checks (no critical issues, no missing people, verdict must be supported).
+        """
+        rule_usable = self._is_usable_by_rule(verdict, issues, missing_people)
+        if provided_usable is None:
+            return rule_usable
+        return bool(provided_usable) and rule_usable
+
+    def _is_usable_by_rule(
+        self,
+        verdict: GeminiVerdict,
+        issues: list[GeminiValidationIssue],
+        missing_people: list[GeminiMissingPerson],
+    ) -> bool:
+        if verdict != GeminiVerdict.SUPPORTED:
+            return False
+        if missing_people:
+            return False
+        if self._has_critical_issue(issues):
+            return False
+        return True
+
+    def _has_critical_issue(self, issues: list[GeminiValidationIssue]) -> bool:
+        """
+        Treat missing severity as critical to avoid over-counting usable results.
+        """
+        for issue in issues:
+            severity = issue.severity or GeminiIssueSeverity.CRITICAL
+            if severity == GeminiIssueSeverity.CRITICAL:
+                return True
+        return False
 
     def _build_report_from_payload(
         self,
@@ -334,6 +390,7 @@ class GeminiFlashValidator:
                 issues.append(
                     GeminiValidationIssue(
                         type=self._coerce_issue_type(issue.get("type")),
+                        severity=self._coerce_issue_severity(issue.get("severity")),
                         person_name=issue.get("person_name"),
                         field=issue.get("field"),
                         description=issue.get("description") or "",
@@ -357,10 +414,29 @@ class GeminiFlashValidator:
                     )
                 )
 
+        usable_flag = payload.get("usable")
+        if usable_flag is not None:
+            usable_flag = bool(usable_flag)
+
+        confidence_value = payload.get("confidence")
+        try:
+            confidence = float(confidence_value) if confidence_value is not None else None
+        except (TypeError, ValueError):
+            confidence = None
+
+        effective_usable = self._derive_usable(
+            verdict=verdict,
+            issues=issues,
+            missing_people=missing_people,
+            provided_usable=usable_flag,
+        )
+
         summary = GeminiReportSummary(
             verdict=verdict,
             issue_count=len(issues),
             missing_people_count=len(missing_people),
+            usable=effective_usable,
+            confidence=confidence,
         )
 
         return GeminiValidationReport(
@@ -371,6 +447,8 @@ class GeminiFlashValidator:
             validator_model=self.model_name,
             original_model=original_model,
             verdict=verdict,
+            usable=effective_usable,
+            confidence=confidence,
             issues=issues,
             missing_people=missing_people,
             summary=summary,
@@ -428,9 +506,15 @@ class GeminiFlashValidator:
         except GeminiValidatorError as exc:
             issue = GeminiValidationIssue(
                 type=GeminiIssueType.PARSING_ERROR,
+                severity=GeminiIssueSeverity.CRITICAL,
                 description=str(exc),
             )
-            summary = GeminiReportSummary(verdict=GeminiVerdict.UNSURE, issue_count=1, missing_people_count=0)
+            summary = GeminiReportSummary(
+                verdict=GeminiVerdict.UNSURE,
+                issue_count=1,
+                missing_people_count=0,
+                usable=False,
+            )
             return GeminiValidationReport(
                 doc_id=doc_id,
                 passage_id=passage_id,
@@ -439,6 +523,7 @@ class GeminiFlashValidator:
                 validator_model=self.model_name,
                 original_model=original_model,
                 verdict=GeminiVerdict.UNSURE,
+                usable=False,
                 issues=[issue],
                 missing_people=[],
                 summary=summary,
